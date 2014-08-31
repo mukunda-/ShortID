@@ -1,0 +1,24 @@
+
+# when using SQL, the IDs are generated in the database
+# but also saved to disk for fast access.
+#
+# if you aren't sharing IDs between servers,
+# leave SQL disabled, because IDs are primarily
+# retrieved from a flatfile.
+
+# if the SQL table does not exist yet, the plugin will
+# create it and then import local ID files to it.
+# 
+# if you are sharing ids with sql, make sure
+# all of your servers are configured correctly 
+# before starting them.
+#
+
+MySQL:
+  enabled: false
+  address: "example.com:3306"
+  username: example
+  password: password
+  database: shortid
+  #table: shortid
+  
