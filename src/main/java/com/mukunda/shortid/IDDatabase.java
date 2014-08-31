@@ -26,15 +26,15 @@ package com.mukunda.shortid;
  
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.ResultSet;
-import java.util.ArrayDeque; 
+import java.sql.ResultSet; 
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientException; 
 import java.util.ArrayList;
 import java.util.UUID;
-
-import org.bukkit.Bukkit;
-
-
-public class IDDatabase extends SQL implements Runnable {
+ 
+import org.bukkit.scheduler.BukkitRunnable;
+ 
+public class IDDatabase extends SQL {
 	
 	private static class Job {
 		public Object id; 
@@ -58,21 +58,93 @@ public class IDDatabase extends SQL implements Runnable {
 		}
 	}
 	
+	private class Resolver extends BukkitRunnable {
+		
+		private final Job job;
+		
+		private static final int RETRY_DELAY = 20;
+		
+		public Resolver( Job job ) {
+			this.job = job;
+		}
+		
+		public void run() {
+			
+			synchronized( jobProcessingLock ) {
+				
+				try {
+					
+					if( job.id instanceof UUID ) {
+						
+						connect();
+						byte[] uuidBytes = mashUUID( (UUID)job.id );
+						
+						insertStatement.setBytes( 1, uuidBytes );
+						insertStatement.executeUpdate();
+						selectStatement.setBytes( 1, uuidBytes );
+						ResultSet result = selectStatement.executeQuery();
+						result.next();
+						
+						SID id = new SID( result.getInt(1) );
+						storage.map( (UUID)job.id, id );
+						
+						finishedJob(job);
+						
+					} else if( job.id instanceof SID ) {
+						
+						rqueryStatement.setInt( 1, ((SID)job.id).getInt() );
+						ResultSet result = rqueryStatement.executeQuery();
+						
+						UUID id;
+						if( result.next() ) {
+							id = unmashUUID( result.getBytes(1) );
+						} else {
+							id = new UUID(0,0);
+						}
+						storage.map( id, (SID)job.id );
+						
+						finishedJob(job);
+						
+					}
+				} catch ( SQLTransientException e ) {
+					// retry in one second
+					context.getLogger().warning( "SQL query failed. retrying... reason = " + e.getMessage() );
+					runTaskLaterAsynchronously( context, RETRY_DELAY );
+				} catch ( SQLRecoverableException e ) {
+					
+					context.getLogger().warning( "SQL query failed. retrying... reason = " + e.getMessage() );
+					disconnect();  
+					runTaskLaterAsynchronously( context, RETRY_DELAY );
+					
+				} catch ( SQLException e ) {
+					disconnect();
+					context.getLogger().severe( "SQL encountered a non-recoverable problem: " + e.getMessage() );
+					context.Crash();
+					return;
+				}
+			}
+			
+			finishedJob(job);
+		}
+	}
+ 
+	private final ShortID context;
+	
 	private final IDMap storage;
 	private final ArrayList<Job> jobs;
+	private final Object jobProcessingLock;
 	 
-	private String table;
+	private final String table;
 
 	private PreparedStatement insertStatement;
 	private PreparedStatement selectStatement;
 	private PreparedStatement rqueryStatement;
-	
-	private boolean stopped = true;
-	
-	
-	public IDDatabase( IDMap storage, SQLInfo info, String table ) {
+	   
+	public IDDatabase( ShortID context, IDMap storage, SQLInfo info, String table ) {
 		super(info);
 		
+		jobProcessingLock = new Object();
+		this.context = context;
 		jobs = new ArrayList<Job>();
 		this.storage = storage;
 		this.table = table;
@@ -90,15 +162,7 @@ public class IDDatabase extends SQL implements Runnable {
 		rqueryStatement = getConnection().prepareStatement(
 				"SELECT `uuid` FROM " + table + "WHERE `sid` = ? LIMIT 1" );
 	}
-	 
-	
-	private synchronized Job waitForWork() throws InterruptedException {
-		while( jobs.isEmpty() ) {
-			wait();
-		}
-		return jobs.getFirst();
-	}
-	
+	  
 	private synchronized void finishedJob( Job j ) {
 		jobs.remove(j);
 	}
@@ -126,86 +190,20 @@ public class IDDatabase extends SQL implements Runnable {
 			dataH |= ((long)bytes[i])<<(i<<3);
 		return new UUID( dataH, dataL );
 	}
-	
-	private void executeJob( Job job ) throws SQLException {
-		if( job.id instanceof UUID ) {
-			
-			connect();
-			byte[] uuidBytes = mashUUID( (UUID)job.id );
-			
-			insertStatement.setBytes( 1, uuidBytes );
-			insertStatement.executeUpdate();
-			selectStatement.setBytes( 1, uuidBytes );
-			ResultSet result = selectStatement.executeQuery();
-			result.next();
-			
-			SID id = new SID( result.getInt(1) );
-			storage.map( (UUID)job.id, id );
-			
-			finishedJob(job);
-			
-		} else if( job.id instanceof SID ) {
-			
-			rqueryStatement.setInt( 1, ((SID)job.id).getInt() );
-			ResultSet result = rqueryStatement.executeQuery();
-			
-			UUID id;
-			if( result.next() ) {
-				id = unmashUUID( result.getBytes(1) );
-			} else {
-				id = new UUID(0,0);
-			}
-			storage.map( id, (SID)job.id );
-			
-			finishedJob(job);
-			
-		} else {
-			// what do i do
-		}
-	}
-	
-	public void run() {
-		
-		try {
-			while( !stop ) {
-				Job job = waitForWork();
-				
-				executeJob( job );
-				
-			}
-		} catch( InterruptedException e ) {
-			
-			// we were interrupted..?
-			
-			
-		}
-	}
-	
-	private static class Resolver extends BukkitRunnable {
-		
-	}
-	
+	 
 	public synchronized void resolve( UUID uuid ) {
-		if( jobs.contains( uuid ) ) return;
+		Job job = new Job( uuid );
+		if( jobs.contains( job ) ) return;
+		jobs.add( job );
 		
-		Bukkit.getScheduler()
-		jobs.add( new Job( uuid ) );
-		notifyAll();
+		new Resolver( job ).runTaskAsynchronously( context );  
 	}
 	
 	public synchronized void resolve( SID sid ) {
-		if( jobs.contains( sid ) ) return;
-		jobs.add( new Job( sid ) );
-		notifyAll();
-	}
-	
-	public synchronized void start() {
-		if( !stopped ) return;
+		Job job = new Job( sid );
+		if( jobs.contains( job ) ) return;
+		jobs.add( new Job( sid ) ); 
 		
-		Thread thread = new Thread(this);
-	}
-	
-	public synchronized void start() {
-		
-	}
+		new Resolver( job ).runTaskAsynchronously( context );
+	} 
 }

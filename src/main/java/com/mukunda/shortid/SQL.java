@@ -26,9 +26,10 @@ package com.mukunda.shortid;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.SQLException; 
 import java.util.Properties;
+
+import org.bukkit.Bukkit;
 
 //-------------------------------------------------------------------------------------------------
 public class SQL {
@@ -56,9 +57,15 @@ public class SQL {
 	}
 	
 	//-------------------------------------------------------------------------------------------------
-	protected final void disconnect() throws SQLException {
+	protected final void disconnect() {
 		if( connection != null ) {
-			connection.close();
+			
+			try {
+				connection.close();
+			} catch( SQLException e ) {
+				Bukkit.getLogger().warning( "Strange SQL exception during disconnect." );
+				e.printStackTrace();
+			}
 			connection = null;
 		} 
 	}
@@ -81,8 +88,7 @@ public class SQL {
 				buildAddress(), 
 				connectionProperties );
 		
-		onConnected();
-		// prepare statements
+		onConnected(); 
 	}
 	
 	//-------------------------------------------------------------------------------------------------

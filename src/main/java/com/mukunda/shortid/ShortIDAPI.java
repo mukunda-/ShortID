@@ -27,6 +27,7 @@ package com.mukunda.shortid;
 import java.util.UUID;
 
 import org.bukkit.OfflinePlayer;
+import org.bukkit.entity.Player;
 
 /**
  * API for plugins to access ShortID queries
@@ -35,7 +36,7 @@ import org.bukkit.OfflinePlayer;
  *
  */
 public interface ShortIDAPI {
-	
+	// TODO getPlayer, getOfflinePlayer
 	/**********************************************************************
 	 * Get the Short ID for a player.
 	 * 
@@ -61,5 +62,23 @@ public interface ShortIDAPI {
 	 * @see      #getSID(OfflinePlayer)
 	 **********************************************************************/
 	public UUID getUUID( SID id );
+
+	/**********************************************************************
+	 * Get a Player from an SID.
+	 * 
+	 * @param id The SID of a player.
+	 * @return   The player associated with the SID, 
+	 *           or null if the player is offline or the SID is invalid.
+	 **********************************************************************/
+	public Player getPlayer( SID id );
+	
+	/**********************************************************************
+	 * Get an OfflinePlayer from an SID.
+	 * 
+	 * @param id The SID of a player.
+	 * @return   The OfflinePlayer associated with the SID, or null if the
+	 *           SID is invalid.
+	 **********************************************************************/
+	public OfflinePlayer getOfflinePlayer( SID id );
 	
 }
