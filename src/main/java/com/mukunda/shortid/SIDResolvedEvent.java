@@ -1,3 +1,4 @@
+
 package com.mukunda.shortid;
 
 import org.bukkit.entity.Player;

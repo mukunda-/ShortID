@@ -1,26 +1,3 @@
-/*
- * ShortID
- * Copyright (c) 2014 mukunda
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
-
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- * 
- */  
 
 package com.mukunda.shortid;
  
@@ -70,7 +47,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 			return;
 		}
 		
-		idMap = new IDMap();
+		idMap = new IDMap( this );
 
 		if( getConfig().getBoolean( "MySQL.enabled", false ) ) {
 
@@ -151,77 +128,6 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		idMap.notifyAll();
 		instance = null;
 	} 
-	/*
-	private static class DataEntry {
-		
-		public final int index;
-		public final int id;
-		
-		public DataEntry( byte[] bytes ) {
-			if( bytes.length != 6 ) throw new IllegalArgumentException();
-			
-			index = (((int)bytes[0]) & 0xFF) | 
-					((((int)bytes[1]) & 0xFF)<<8);
-			
-			id = (((int)bytes[2]) & 0xFF) | 
-				 ((((int)bytes[3]) & 0xFF)<<8) | 
-				 ((((int)bytes[4]) & 0xFF)<<16) | 
-				 ((((int)bytes[5]) & 0xFF)<<24);
-		}
-		
-		public boolean validate() {
-			if( index < 1 || index > 4096 ) {
-				return false;
-			}
-			if( id == 0 ) return false;
-			return true;
-		}
-	}
-	
-	private boolean tryRecoverFile( Path file ) throws IOException {
-		ArrayList<DataEntry> entries = new ArrayList<DataEntry>();
-		
-		try ( BufferedInputStream input = new BufferedInputStream( Files.newInputStream( file ) ) ) {
-		
-			long skipped = input.skip( 8192 );
-			if( skipped != 8192 ) {
-				// file is borked.
-				return false; 
-			}			
-			
-			short[] index_table = new short[4096];
-			byte[] data = new byte[6];
-			while( input.read( data, 0, 6 ) == 6 ) {
-				
-				DataEntry entry = new DataEntry( data );
-				if( !entry.validate() ) {
-					// data is borked.
-					return false;
-				}
-			}
-		} catch( IOException e ) {
-			throw e;
-		}
-		
-		// create new file
-		Files.delete( file );
-		
-		try( BufferedOutputStream output = new BufferedOutputStream( Files.newOutputStream(file) ) ) {
-			
-		}
-		
-	}*/
-	/*
-	//---------------------------------------------------------------------------------------------
-	private void repairUUIDTable( Path file ) {
-		if( !Files.exists(file) ) return;
-		
-		if( !tryRecoverFile( file ) ) {
-			Files.delete( file );
-			getLogger().severe( "Tried to recover damaged file but failed. Some player identities have been erased." );
-		}
-	}*/
-	 
 	
 	//---------------------------------------------------------------------------------------------
 	private SID generateID() {
@@ -251,10 +157,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 			 channel.write( buffer );
 		}
 	}
-
-
-	//---------------------------------------------------------------------------------------------
-	
+ 
 	/*******************************************************************
 	 * Write an entry to a map file.
 	 *  MAP files contain 256 fixed size entries, either UUIDs
