@@ -3,7 +3,7 @@
 # but also saved to disk for fast access. 
 
 # if the SQL table does not exist yet, the plugin will
-# create it and then import local ID files to it.
+# create it and then import any local ID files to it.
 # 
 # if you are sharing ids with sql, make sure
 # all of your servers are configured correctly 

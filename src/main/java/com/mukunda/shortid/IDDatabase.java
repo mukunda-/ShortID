@@ -1,3 +1,26 @@
+/*
+ * ShortID
+ *
+ * Copyright (c) 2014 Mukunda Johnson
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 
 package com.mukunda.shortid;
  
@@ -16,17 +39,27 @@ import java.util.Map;
 import java.util.UUID;
  
 
-
-
-
-
-
+import org.bukkit.ChatColor;
 import org.bukkit.scheduler.BukkitRunnable;
- 
+
+/**
+ * 
+ * IDDatabase, manages resolving IDs from a MySQL database
+ * 
+ * @author mukunda
+ *
+ */
 public class IDDatabase extends SQL {
 	
+	// delay in ticks for a database operation to retry after a non-fatal exception
 	private static final int DB_RETRY_DELAY = 20;
 	
+	/**************************************************************************
+	 * job instance, represents a UUID or SID waiting to be resolved.
+	 * 
+	 * @author mukunda
+	 *
+	 **************************************************************************/
 	private static class Job {
 		public Object id; 
 		
@@ -49,14 +82,29 @@ public class IDDatabase extends SQL {
 		}
 	}
 	
+	/**************************************************************************
+	 * work module to be ran asynchronously.
+	 * 
+	 * @author mukunda
+	 *
+	 **************************************************************************/
 	private class Resolver extends BukkitRunnable {
 		
 		private final Job job;
 		
+		/**********************************************************************
+		 * wrap a job to be executed
+		 * 
+		 * @param job
+		 **********************************************************************/
 		public Resolver( Job job ) {
 			this.job = job;
 		}
 		
+		/**********************************************************************
+		 * async execution function
+		 * 
+		 **********************************************************************/
 		public void run() {
 			
 			synchronized( jobProcessingLock ) {
@@ -64,71 +112,99 @@ public class IDDatabase extends SQL {
 				try {
 					
 					if( job.id instanceof UUID ) {
+						// UUID -> SID resolving job
 						
 						connect();
 						byte[] uuidBytes = mashUUID( (UUID)job.id );
 						
+						// insert if not there already
 						insertStatement.setBytes( 1, uuidBytes );
 						insertStatement.executeUpdate();
+						
+						// and select the entry, this should never fail unless something
+						// is seriously wrong (such as the table being maxed out)
 						selectStatement.setBytes( 1, uuidBytes );
 						ResultSet result = selectStatement.executeQuery();
 						result.next();
 						
-						SID id = new SID( result.getInt(1) );
-						storage.map( (UUID)job.id, id );
-						
-						finishedJob(job);
+						SID sid = new SID( result.getInt(1) );
+						storage.map( (UUID)job.id, sid );
+						context.getFlatFiles().writeIDs( (UUID)job.id, sid, true );
 						
 					} else if( job.id instanceof SID ) {
+						// SID -> UUID resolving job
 						
 						rqueryStatement.setInt( 1, ((SID)job.id).getInt() );
 						ResultSet result = rqueryStatement.executeQuery();
 						
-						UUID id;
+						UUID uuid;
 						if( result.next() ) {
-							id = unmashUUID( result.getBytes(1) );
+							uuid = unmashUUID( result.getBytes(1) );
+							context.getFlatFiles().writeIDs( uuid, (SID)job.id, true );
 						} else {
-							id = new UUID(0,0);
+							// we need to map SOMETHING so the waiting functions
+							// don't wait forever, we use UUID(0,0) to signal a
+							// failed result
+							uuid = new UUID(0,0);
 						}
-						storage.map( id, (SID)job.id );
-						
-						finishedJob(job);
+						storage.map( uuid, (SID)job.id );
 						
 					}
-				} catch ( SQLTransientException e ) {
-					// retry in one second
-					context.getLogger().warning( "SQL query failed. retrying... reason = " + e.getMessage() );
-					runTaskLaterAsynchronously( context, DB_RETRY_DELAY );
-				} catch ( SQLRecoverableException e ) {
 					
-					context.getLogger().warning( "SQL query failed. retrying... reason = " + e.getMessage() );
-					disconnect();  
-					runTaskLaterAsynchronously( context, DB_RETRY_DELAY );
+				} catch( SQLTransientException|SQLRecoverableException e ) {
 					
-				} catch ( SQLException e ) {
+					// start a new connection if it is a "recoverable" exception
+					if( e instanceof SQLRecoverableException ) disconnect();
+					
+					// stall for a little bit and retry.
+					context.getLogger().warning( ChatColor.YELLOW + "SQL query failed. retrying... reason = " + e.getMessage() );
+					runTaskLaterAsynchronously( context, DB_RETRY_DELAY );
+				} catch( SQLException e ) {
+					
+					// severe exception, program cannot continue.
 					disconnect();
-					context.getLogger().severe( "SQL encountered a non-recoverable problem: " + e.getMessage() );
+					context.getLogger().severe( ChatColor.RED + "SQL encountered a non-recoverable problem: " + e.getMessage() );
+					e.printStackTrace();
 					context.Crash();
-					return;
 				}
 			}
-			
+
+			// remove the job from the queue
 			finishedJob(job);
 		}
 	}
- 
+	
+	// parent plugin
 	private final ShortID context;
 	
+	// where resolved results are stored
 	private final IDMap storage;
+	
+	// list of jobs, accessed concurrently
 	private final ArrayList<Job> jobs;
+	
+	// lock for the Resolver class to synchronize usage of the database
 	private final Object jobProcessingLock;
-	 
+	
+	// sql table name in database
 	private final String table;
-
+	
+	// prepared statements to:
+	//   *try* to insert a new user into the database
+	//   read the sid from a uuid
+	//   read a uuid from an sid (reverse-query)
 	private PreparedStatement insertStatement;
 	private PreparedStatement selectStatement;
 	private PreparedStatement rqueryStatement;
 	   
+	/**************************************************************************
+	 * Construct an IDDatabase instance
+	 * 
+	 * @param context  Plugin that owns this instance.
+	 * @param storage  IDMap that will be filled with resolved IDs.
+	 * @param info     Connection info and credentials.
+	 * @param table    SQL table name to use when accessing the database.
+	 **************************************************************************/
 	public IDDatabase( ShortID context, IDMap storage, SQLInfo info, String table ) {
 		super(info);
 		
@@ -139,6 +215,11 @@ public class IDDatabase extends SQL {
 		this.table = table;
 	}
 	
+	/**************************************************************************
+	 * Called when an sql connection is established;
+	 * this prepares the statements to be ran during resolves
+	 * 
+	 **************************************************************************/
 	@Override
 	protected void onConnected() throws SQLException {
 		
@@ -152,10 +233,26 @@ public class IDDatabase extends SQL {
 				"SELECT `uuid` FROM " + table + "WHERE `sid` = ? LIMIT 1" );
 	}
 	  
+	/**************************************************************************
+	 * Remove a job from the queue, sending a notify signal on the jobs
+	 * object if it is empty to wake up waitUntilFinished.
+	 * 
+	 * @param j job to be removed
+	 **************************************************************************/
 	private synchronized void finishedJob( Job j ) {
 		jobs.remove(j);
+		if( jobs.isEmpty() ) {
+			jobs.notifyAll();			
+		}
+		
 	}
 	
+	/**************************************************************************
+	 * Convert a UUID into "data".
+	 * 
+	 * @param id  UUID to mash up
+	 * @return    16-byte array with uuid contents
+	 **************************************************************************/
 	private byte[] mashUUID( UUID id ) {
 		// turn id into 16 bytes
 		byte[] bytes = new byte[16];
@@ -168,6 +265,12 @@ public class IDDatabase extends SQL {
 		return bytes;
 	}
 
+	/************************************************************************** 
+	 * Convert raw data into a UUID.
+	 * 
+	 * @param bytes 16-byte array of data
+	 * @return      UUID built from data
+	 **************************************************************************/
 	private UUID unmashUUID( byte[] bytes ) {
 		// turn 16 bytes into id
 		
@@ -180,6 +283,12 @@ public class IDDatabase extends SQL {
 		return new UUID( dataH, dataL );
 	}
 	 
+	/**************************************************************************
+	 * Post a job to resolve a UUID to an SID
+	 * if the job is already pending or in progress, this does nothing.
+	 * 
+	 * @param uuid
+	 **************************************************************************/
 	public synchronized void resolve( UUID uuid ) {
 		Job job = new Job( uuid );
 		if( jobs.contains( job ) ) return;
@@ -187,7 +296,13 @@ public class IDDatabase extends SQL {
 		
 		new Resolver( job ).runTaskAsynchronously( context );  
 	}
-	
+
+	/**************************************************************************
+	 * Post a job to resolve an SID to a UUID.
+	 * If the job is already pending or in progress, this does nothing.
+	 * 
+	 * @param sid
+	 **************************************************************************/
 	public synchronized void resolve( SID sid ) {
 		Job job = new Job( sid );
 		if( jobs.contains( job ) ) return;
@@ -196,10 +311,37 @@ public class IDDatabase extends SQL {
 		new Resolver( job ).runTaskAsynchronously( context );
 	} 
 	
+	/**************************************************************************
+	 * Wait until all pending async tasks have been completed
+	 * 
+	 **************************************************************************/
+	public synchronized void waitUntilFinished() {
+		try {
+			while( !jobs.isEmpty() ) {	
+				jobs.wait();
+			}
+		} catch( InterruptedException e ) {
+			context.getLogger().warning( "SQL flush was forcibly cancelled." );
+		}
+	}
+	
+	/* ******************************************************************
+	 * the following functions are not thread safe and can only be called
+	 * before any real work begins.
+	 ********************************************************************/
+	 
+	
+	/**************************************************************************
+	 * Import data from the local flat files into the database.
+	 * 
+	 * This is called if the sql table has been created for the first time.
+	 * 
+	 * @return false if the import failed
+	 **************************************************************************/
 	public boolean importData() {
 
 		try {
-			HashMap<UUID,SID> data = context.buildImport();
+			final HashMap<UUID,SID> data = context.getFlatFiles().buildImport();
 			
 			while( true ) {
 				try {
@@ -222,28 +364,29 @@ public class IDDatabase extends SQL {
 					statement.close();
 					break;
 					
-				} catch ( SQLTransientException|SQLRecoverableException e ) {
+				} catch( SQLTransientException|SQLRecoverableException e ) {
 					// retry in one second
 					if( e instanceof SQLRecoverableException ) disconnect();
 					
 					context.getLogger().warning( "Database fault during import: " + e.getMessage() + " -- retrying..." );
 					try {
 						Thread.sleep( 50*DB_RETRY_DELAY );
-					} catch( InterruptedException e2 ) {} // yum.
+					} catch( InterruptedException e2 ) { return false; } // yum.
 					
-				} catch ( SQLException e ) {
+				} catch( SQLException e ) {
 					disconnect();
-					context.getLogger().severe( "SQL encountered a non-recoverable problem: " + e.getMessage() );
-					context.getLogger().severe( "IDs have **NOT** been imported! " + e.getMessage() );
+					context.getLogger().severe( ChatColor.RED + "SQL encountered a non-recoverable problem." );
+					context.getLogger().severe( ChatColor.RED + "IDs have **NOT** been imported!" );
+					e.printStackTrace();
 					return false;
 				}
 			}
 			
 		} catch (IOException e) {
 			context.getLogger().severe( 
-					"IOException while trying to import data! IDs have **NOT** been imported!" );
+					ChatColor.RED + "IOException while trying to import data! IDs have **NOT** been imported!" );
 			
-			context.getLogger().severe(  e.getMessage() );
+			e.printStackTrace();
 			
 			return false;
 		}
@@ -251,6 +394,15 @@ public class IDDatabase extends SQL {
 		
 	}
 	
+	/**************************************************************************
+	 * Initialize the database
+	 * 
+	 * Checks if the database table has been created, and if not, it creates
+	 * it and imports data.
+	 * 
+	 * @return false if the database could not be initialized; the program
+	 *         should then terminate.
+	 **************************************************************************/
 	public boolean setup() {
 		
 		boolean importData = false;
@@ -281,12 +433,13 @@ public class IDDatabase extends SQL {
 				try {
 					Thread.sleep( 50*DB_RETRY_DELAY );
 				} catch( InterruptedException e2 ) {
-					
+					return false;
 				}
 				
-			} catch ( SQLException e ) {
+			} catch( SQLException e ) {
 				disconnect();
-				context.getLogger().severe( "SQL encountered a non-recoverable problem: " + e.getMessage() );
+				context.getLogger().severe( ChatColor.RED  + "SQL encountered a non-recoverable problem: " + e.getMessage() );
+				e.printStackTrace();
 				return false;
 			}
 		}

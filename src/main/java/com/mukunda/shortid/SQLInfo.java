@@ -1,4 +1,3 @@
- 
 package com.mukunda.shortid;
 
 public class SQLInfo {

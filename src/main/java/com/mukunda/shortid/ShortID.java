@@ -1,9 +1,25 @@
 /*
  * ShortID
- * Copyright (c) 2014 mukunda
+ *
+ * Copyright (c) 2014 Mukunda Johnson
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  * 
- * API for managing 32-bit IDs that represent player UUIDs
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
  * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
  */
 
 package com.mukunda.shortid;
@@ -11,6 +27,7 @@ package com.mukunda.shortid;
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException; 
+import java.io.OutputStream;
 import java.nio.ByteBuffer; 
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
@@ -37,6 +54,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	
 	public static ShortID instance;
 
+	private FlatFiles flatfiles;
 	private IDMap idMap;
 	private IDDatabase db;
 	
@@ -49,13 +67,18 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		return instance;
 	}
 	
+	public FlatFiles getFlatFiles() {
+		return flatfiles;
+	}
+	
 	//---------------------------------------------------------------------------------------------
 	public void onEnable() {
-		saveConfig();
+		saveDefaultConfig();
 		
 		try {
-			Files.createDirectory( getDataFolder().toPath().resolve( "uuid" ) );
-			Files.createDirectory( getDataFolder().toPath().resolve( "sid" ) );
+			
+			Files.createDirectories( getDataFolder().toPath().resolve( "uuid" ) );
+			Files.createDirectories( getDataFolder().toPath().resolve( "sid" ) );
 		} catch ( IOException e ) {
 			getLogger().severe( "Couldn't create data folders." );
 			setEnabled(false);
@@ -100,7 +123,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 			}
 			
 		} else {
-			Path path = getDataFolder().toPath().resolve( "nextid.dat" );
+			Path path = getDataFolder().toPath().resolve( "next_sid.dat" );
 			if( Files.exists(path) ) {
 				String content;
 				try {
@@ -114,7 +137,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 				
 				try {
 					if( content == "" ) throw new NumberFormatException();
-					nextLocalID = Integer.parseInt( content );
+					nextLocalID = Integer.parseInt( content.trim() );
 					
 				} catch( NumberFormatException e ) {
 					getLogger().severe( "Next ID file was corrupted, scanning data files to get next available ID." );
@@ -140,7 +163,9 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	
 	//---------------------------------------------------------------------------------------------
 	public void onDisable() {
-		idMap.notifyAll();
+		if( db != null ) {
+			db.waitUntilFinished();
+		}
 		instance = null;
 	} 
 	
@@ -155,164 +180,17 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 					getDataFolder().toPath().resolve("next_sid.dat"), 
 					lines, 
 					StandardCharsets.US_ASCII, 
-					StandardOpenOption.TRUNCATE_EXISTING );
+					StandardOpenOption.CREATE,
+					StandardOpenOption.TRUNCATE_EXISTING,
+					StandardOpenOption.WRITE );
 		} catch( IOException e ) {
-			getLogger().severe( "Couldn't save next_sid file." );
+			getLogger().severe( "Couldn't save next_sid file. "+ e.getMessage() );
+			e.printStackTrace();
 		}
 		return id;
 	}
 	
-	//---------------------------------------------------------------------------------------------
-	private void zeroFillChannel( SeekableByteChannel channel , int size) throws IOException {
-		if( channel.size() < size ) {
-			 ByteBuffer buffer = ByteBuffer.allocateDirect( size - (int)channel.size() );
-			 
-			 // fill with zero
-			 channel.position( channel.size() );
-			 channel.write( buffer );
-		}
-	}
- 
-	/*******************************************************************
-	 * Write an entry to a map file.
-	 *  MAP files contain 256 fixed size entries, either UUIDs
-	 * or SIDs
-	 *
-	 * UUID table is indexed by uppermost octet of UUID
-	 * SID table is indexed by lowermost octet of SID
-	 * 
-	 * @param path Path to map file, located in the "uuid" or "sid" folder.
-	 * @param entrySize Size of entries in the map file, 16 for SID map or 4 for UUID map
-	 * @param index index of entry to write
-	 * @param buffer contents of entry to write
-	 * @throws IOException
-	 *******************************************************************/
-	private void writeMapFile( Path path, int entrySize, 
-							int index, ByteBuffer buffer ) 
-									throws IOException {
-		
-		try( SeekableByteChannel output =
-				Files.newByteChannel( 
-						path, 
-						StandardOpenOption.WRITE, 
-						StandardOpenOption.CREATE ) ) {
-			
-			// zero-fill file
-			zeroFillChannel( output, 256*entrySize );
-			output.position( index*entrySize ); 
-			output.write( buffer );
-			
-		} catch( IOException e ) {
-			throw e;
-		}
-	}
 	
-	//---------------------------------------------------------------------------------------------
-	private ByteBuffer readMapFile( Path path, int entrySize, 
-							int index ) throws IOException {
-
-		try( SeekableByteChannel input =
-				Files.newByteChannel( 
-						path, 
-						StandardOpenOption.READ ) ) {
-			  
-			ByteBuffer buffer = ByteBuffer.allocateDirect(entrySize); 
-			input.position( index*entrySize );
-			int size = input.read( buffer );
-			if( size < entrySize ) {
-				getLogger().severe( "Map file is corrupt: " + path.toString() );
-				return null;
-			}
-			
-			return buffer;
-			
-		} catch( IOException e ) {
-			throw e;
-		}
-	}
-	
-	//---------------------------------------------------------------------------------------------
-	private Path getMapFilePath( UUID uuid ) {
-		return getDataFolder().toPath().resolve( "uuid" )
-				.resolve( "xx" + uuid.toString().substring( 2 ) + ".map" );
-	}
-	
-	private Path getMapFilePath( SID sid ) {
-		return getDataFolder().toPath().resolve( "sid" )
-				.resolve( sid.toString().substring(0,6) + "xx" + ".map" );
-	}
-	
-	//---------------------------------------------------------------------------------------------
-	private void writeSIDToDisk( UUID uuid, SID sid ) {
-		 
-		int index = (int)(uuid.getMostSignificantBits() >>> (64-8));
-		
-		try {
-			ByteBuffer buffer = ByteBuffer.allocateDirect(4);
-			buffer.putInt( sid.getInt() ); 
-			writeMapFile( getMapFilePath(uuid), 4, index, buffer );
-		} catch( IOException e ) {
-			getLogger().severe( "Couldn't write UUID map to disk." );
-		}
-		  
-		index = sid.getInt() & 0xFF;
-
-		try {
-			ByteBuffer buffer = ByteBuffer.allocateDirect(16);
-			buffer.putLong( uuid.getLeastSignificantBits() ); 
-			buffer.putLong( uuid.getMostSignificantBits() );
-			writeMapFile( getMapFilePath(sid), 16, index, buffer );
-		} catch( IOException e ) {
-			getLogger().severe( "Couldn't write SID map to disk." );
-		}
-		
-	}
-	
-	//---------------------------------------------------------------------------------------------	
-	private SID readSIDFromDisk( UUID uuid ) {
-		Path path = getMapFilePath( uuid );
-		if( !Files.exists(path) ) return null;
-		
-		
-		int index = (int)(uuid.getMostSignificantBits() >>> (64-8));
-		
-		try {
-			
-			ByteBuffer buffer = readMapFile( path, 4, index );
-			if( buffer == null ) return null;
-			int value = buffer.getInt( 0 );
-			if( value == 0 ) return null;
-			return new SID(value);
-			
-		} catch( IOException e ) {
-			getLogger().severe( "Couldn't read UUID table on disk." );
-		}
-
-		return null;
-	}
-	
-	//---------------------------------------------------------------------------------------------	
-	private UUID readUUIDFromDisk( SID sid ) {
-		Path path = getMapFilePath( sid );
-		if( !Files.exists(path) ) return null;
-		
-		int index = sid.getInt() & 0xFF;
-		
-		try {
-			
-			ByteBuffer buffer = readMapFile( path, 16, index );
-			if( buffer == null ) return null;
-			long valueL = buffer.getLong( 0 );
-			long valueH = buffer.getLong( 8 );
-			if( valueL == 0 && valueH == 0 ) return null;
-			return new UUID( valueH, valueL );
-			
-		} catch( IOException e ) {
-			getLogger().severe( "Couldn't read SID table on disk." );
-		}
-
-		return null;
-	}
 	
 	//---------------------------------------------------------------------------------------------	
 	@Override
@@ -321,8 +199,11 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		if( sid != null ) return sid;
 		 
 		// try to get from disk
-		sid = readSIDFromDisk( uuid );
-		if( sid != null )  return sid;
+		sid = flatfiles.readSID( uuid );
+		if( sid != null ) {
+			idMap.map( uuid, sid );
+			return sid;
+		}
 
 		if( db != null ) {
 			// database mode: get from database.
@@ -334,11 +215,14 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 				e.printStackTrace();
 				return null; 
 			}
-			writeSIDToDisk( uuid, sid );
+			//writeIDToDisk( uuid, sid );
 			
 		} else {
 			sid = generateID();
-			writeSIDToDisk( uuid, sid );
+			
+			getLogger().info( "Generated new ID: " + uuid + " -> " + sid );
+			idMap.map( uuid, sid );
+			flatfiles.writeIDs( uuid, sid, false ); 
 			
 		}
 		
@@ -358,7 +242,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		if( uuid != null ) return uuid;
 		
 		// try to get from disk
-		uuid = readUUIDFromDisk( sid );
+		uuid = flatfiles.readUUID( sid );
 		if( uuid != null ) return uuid;
 
 		if( db != null ) {
@@ -366,8 +250,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 			db.resolve( sid );
 			try {
 				
-				uuid = idMap.getWait( sid );
-				
+				uuid = idMap.getWait( sid ); 
 				if( uuid == null ) {
 					// invalid SID.
 					return null;
@@ -378,7 +261,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 				e.printStackTrace();
 				return null; 
 			}
-			writeSIDToDisk( uuid, sid );
+			flatfiles.writeIDs( uuid, sid, true );
 			
 		}
 		
@@ -387,11 +270,13 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	}
 	
 	//---------------------------------------------------------------------------------------------
+	@Override
 	public Player getPlayer( SID sid ) {
 		return Bukkit.getPlayer( getUUID(sid) );
 	}
 	
 	//---------------------------------------------------------------------------------------------
+	@Override
 	public OfflinePlayer getOfflinePlayer( SID sid ) {
 		return Bukkit.getOfflinePlayer( getUUID(sid) );
 	}
@@ -400,9 +285,25 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	@EventHandler( priority = EventPriority.MONITOR )
 	public void onPlayerLogin( PlayerLoginEvent event ) {
 		if( event.getResult() == Result.ALLOWED ) {
-			if( db != null ) {
-				db.resolve( event.getPlayer().getUniqueId() );
+			
+			UUID uuid = event.getPlayer().getUniqueId();
+			SID sid = idMap.get( uuid ); 
+			if( sid == null ) {
+				if( flatfiles.readSID( uuid ) == null ) {
+					if( db != null ) {
+						
+						// start resolving early so when they try to read the value
+						// later on there's less chance of a stall.
+						
+						db.resolve( event.getPlayer().getUniqueId() );
+					} else {
+						// non database mode, the id is generated on the first call
+						// to getSID()
+						
+					}
+				}
 			}
+			
 		}
 		
 	}
@@ -412,57 +313,22 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		
 		SID id = idMap.get( event.getPlayer().getUniqueId() );
 		if( id == null ) {
+			if( db != null ) {
+				db.resolve( event.getPlayer().getUniqueId() );
+			}
 			
 		}
-		if( db != null ) {
-			db.resolve( event.getPlayer().getUniqueId() );
-		}
+		
 		
 	}
 	
-	//---------------------------------------------------------------------------------------------
+	/**************************************************************************
+	 * shut down this plugin due to a critical error.
+	 * 
+	 **************************************************************************/
 	public void Crash() {
 		this.setEnabled(false);
 	}
 	
-	public HashMap<UUID,SID> buildImport() throws IOException {
-		HashMap<UUID,SID> result = new HashMap<UUID,SID>();
-		
-		File[] files = new File( getDataFolder(), "sid" ).listFiles();
-		for( File file : files ) {
-
-			if( !file.isFile() ) continue;
-			if( !file.getName().endsWith(".map") ) continue;
-			
-			ByteBuffer buffer = ByteBuffer.allocate(16);//[4];
-			//byte[] buffer = new byte[4];
-			
-			String sidBase = file.getName().substring( 0, 6 );
-			
-			try (
-				BufferedInputStream input = new BufferedInputStream( 
-						Files.newInputStream( file.toPath() ) ) ) {
-				
-				for( int index = 0; index < 256; index++ ) {
-					
-					int size = input.read( buffer.array() );
-					if( size != 16 ) break;
-					
-					String sidString = sidBase + String.format( "%02X", index );
-					
-					long dataL, dataH;
-					dataL = buffer.getLong(0);
-					dataH = buffer.getLong(1);
-					if( dataL == 0 && dataH == 0 ) continue;
-					
-					result.put( new UUID(dataH,dataL), SID.fromString(sidString) );
-					
-				}
-			} catch( IOException e ) {
-				throw e;
-			} 
-
-		}
-		return result;
-	}
+	
 }
