@@ -1,6 +1,15 @@
+/*
+ * ShortID
+ * Copyright (c) 2014 mukunda
+ * 
+ * API for managing 32-bit IDs that represent player UUIDs
+ * 
+ */
 
 package com.mukunda.shortid;
  
+import java.io.BufferedInputStream;
+import java.io.File;
 import java.io.IOException; 
 import java.nio.ByteBuffer; 
 import java.nio.channels.SeekableByteChannel;
@@ -8,9 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files; 
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption; 
-import java.sql.SQLException;
-import java.sql.SQLNonTransientException;
 import java.util.ArrayList; 
+import java.util.HashMap;
 import java.util.UUID;
 
 import org.bukkit.Bukkit;
@@ -26,13 +34,20 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 //---------------------------------------------------------------------------------------------
 public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
-
-	public ShortID instance;
+	
+	public static ShortID instance;
 
 	private IDMap idMap;
 	private IDDatabase db;
 	
+	public static final int INITIAL_SID = 0x100;
+	
 	private int nextLocalID;
+	
+	//---------------------------------------------------------------------------------------------
+	public static ShortIDAPI getAPI() {
+		return instance;
+	}
 	
 	//---------------------------------------------------------------------------------------------
 	public void onEnable() {
@@ -79,14 +94,9 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 
 			db = new IDDatabase( this, idMap, info, table );
 			
-			try {
-				db.testConnection();
-			} catch( SQLNonTransientException e ) {
-				getLogger().severe( "SQL Error. " + e.getMessage() );
+			if( !db.setup() ) {
 				setEnabled( false );
 				return;
-			} catch( SQLException e ) {
-				getLogger().warning( "Could not connect to database. " + e.getMessage() );
 			}
 			
 		} else {
@@ -97,7 +107,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 					content = new String( Files.readAllBytes( path ) );
 					
 				} catch( IOException e ) {
-					getLogger().severe( "Could not read next id." );
+					getLogger().severe( "Could not read next id. " + e.getMessage() );
 					setEnabled(false);
 					return;
 				}
@@ -108,14 +118,19 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 					
 				} catch( NumberFormatException e ) {
 					getLogger().severe( "Next ID file was corrupted, scanning data files to get next available ID." );
-					// TODO.. scan data structure
+					try {
+						nextLocalID = NextIDFinder.FindNextID( this );
+					} catch( IOException e2 ) {
+						getLogger().severe( "Could not read ID file table. " + e2.getMessage() );
+						setEnabled(false);
+					}
 				}
 				
 				getLogger().info( "Next ID available = " + nextLocalID );
 				
 			} else {
 
-				nextLocalID = 0x100;
+				nextLocalID = INITIAL_SID;
 			}
 		}
 		
@@ -408,5 +423,46 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	//---------------------------------------------------------------------------------------------
 	public void Crash() {
 		this.setEnabled(false);
+	}
+	
+	public HashMap<UUID,SID> buildImport() throws IOException {
+		HashMap<UUID,SID> result = new HashMap<UUID,SID>();
+		
+		File[] files = new File( getDataFolder(), "sid" ).listFiles();
+		for( File file : files ) {
+
+			if( !file.isFile() ) continue;
+			if( !file.getName().endsWith(".map") ) continue;
+			
+			ByteBuffer buffer = ByteBuffer.allocate(16);//[4];
+			//byte[] buffer = new byte[4];
+			
+			String sidBase = file.getName().substring( 0, 6 );
+			
+			try (
+				BufferedInputStream input = new BufferedInputStream( 
+						Files.newInputStream( file.toPath() ) ) ) {
+				
+				for( int index = 0; index < 256; index++ ) {
+					
+					int size = input.read( buffer.array() );
+					if( size != 16 ) break;
+					
+					String sidString = sidBase + String.format( "%02X", index );
+					
+					long dataL, dataH;
+					dataL = buffer.getLong(0);
+					dataH = buffer.getLong(1);
+					if( dataL == 0 && dataH == 0 ) continue;
+					
+					result.put( new UUID(dataH,dataL), SID.fromString(sidString) );
+					
+				}
+			} catch( IOException e ) {
+				throw e;
+			} 
+
+		}
+		return result;
 	}
 }

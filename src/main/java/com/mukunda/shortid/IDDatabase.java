@@ -1,17 +1,31 @@
 
 package com.mukunda.shortid;
  
+import java.io.IOException;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.ResultSet; 
 import java.sql.SQLRecoverableException;
 import java.sql.SQLTransientException; 
+import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.UUID;
  
+
+
+
+
+
+
 import org.bukkit.scheduler.BukkitRunnable;
  
 public class IDDatabase extends SQL {
+	
+	private static final int DB_RETRY_DELAY = 20;
 	
 	private static class Job {
 		public Object id; 
@@ -38,8 +52,6 @@ public class IDDatabase extends SQL {
 	private class Resolver extends BukkitRunnable {
 		
 		private final Job job;
-		
-		private static final int RETRY_DELAY = 20;
 		
 		public Resolver( Job job ) {
 			this.job = job;
@@ -86,12 +98,12 @@ public class IDDatabase extends SQL {
 				} catch ( SQLTransientException e ) {
 					// retry in one second
 					context.getLogger().warning( "SQL query failed. retrying... reason = " + e.getMessage() );
-					runTaskLaterAsynchronously( context, RETRY_DELAY );
+					runTaskLaterAsynchronously( context, DB_RETRY_DELAY );
 				} catch ( SQLRecoverableException e ) {
 					
 					context.getLogger().warning( "SQL query failed. retrying... reason = " + e.getMessage() );
 					disconnect();  
-					runTaskLaterAsynchronously( context, RETRY_DELAY );
+					runTaskLaterAsynchronously( context, DB_RETRY_DELAY );
 					
 				} catch ( SQLException e ) {
 					disconnect();
@@ -183,4 +195,106 @@ public class IDDatabase extends SQL {
 		
 		new Resolver( job ).runTaskAsynchronously( context );
 	} 
+	
+	public boolean importData() {
+
+		try {
+			HashMap<UUID,SID> data = context.buildImport();
+			
+			while( true ) {
+				try {
+					connect();
+					
+					PreparedStatement statement = getConnection().prepareStatement(
+							"INSERT INTO " + table + " (`uuid`,`sid`) VALUES(?,?)" );
+					
+					Iterator<Map.Entry<UUID,SID>> iter = data.entrySet().iterator();
+					while( iter.hasNext() ) {
+						Map.Entry<UUID,SID> entry = iter.next();
+						byte[] uuidBytes = mashUUID( entry.getKey() );
+						
+						statement.setBytes( 1, uuidBytes );
+						statement.setInt( 2, entry.getValue().getInt() );
+						statement.executeUpdate();
+						iter.remove();
+					}
+					
+					statement.close();
+					break;
+					
+				} catch ( SQLTransientException|SQLRecoverableException e ) {
+					// retry in one second
+					if( e instanceof SQLRecoverableException ) disconnect();
+					
+					context.getLogger().warning( "Database fault during import: " + e.getMessage() + " -- retrying..." );
+					try {
+						Thread.sleep( 50*DB_RETRY_DELAY );
+					} catch( InterruptedException e2 ) {} // yum.
+					
+				} catch ( SQLException e ) {
+					disconnect();
+					context.getLogger().severe( "SQL encountered a non-recoverable problem: " + e.getMessage() );
+					context.getLogger().severe( "IDs have **NOT** been imported! " + e.getMessage() );
+					return false;
+				}
+			}
+			
+		} catch (IOException e) {
+			context.getLogger().severe( 
+					"IOException while trying to import data! IDs have **NOT** been imported!" );
+			
+			context.getLogger().severe(  e.getMessage() );
+			
+			return false;
+		}
+		return true;
+		
+	}
+	
+	public boolean setup() {
+		
+		boolean importData = false;
+		
+		while( true ) {
+			
+			try {
+				connect();
+				DatabaseMetaData dbm = getConnection().getMetaData();
+				ResultSet tables = dbm.getTables(null, null, table, null);
+				if( !tables.next() ) {
+					Statement statement = getConnection().createStatement();
+					statement.executeUpdate( "CREATE TABLE "+table+" (" +
+							"uuid BINARY(16) NOT NULL," +
+							"sid INTEGER NOT NULL," +
+							"PRIMARY KEY (uuid,sid) ) " +
+							"AUTO_INCREMENT = " + String.format( "%d", ShortID.INITIAL_SID ) );
+					
+					importData = true;
+					break;
+				}
+				
+				
+			} catch ( SQLTransientException|SQLRecoverableException e ) {
+				// retry in one second
+				if( e instanceof SQLRecoverableException ) disconnect();
+				context.getLogger().warning( "Database setup failure: " + e.getMessage() + " -- retrying..." );
+				try {
+					Thread.sleep( 50*DB_RETRY_DELAY );
+				} catch( InterruptedException e2 ) {
+					
+				}
+				
+			} catch ( SQLException e ) {
+				disconnect();
+				context.getLogger().severe( "SQL encountered a non-recoverable problem: " + e.getMessage() );
+				return false;
+			}
+		}
+		
+		if( importData ) {
+			return importData();
+		}
+		
+		return true;
+	}
 }

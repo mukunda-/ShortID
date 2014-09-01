@@ -36,4 +36,8 @@ public class SID {
 	public String toString() {
 		return String.format( "%08X", id );
 	}
+	
+	public static SID fromString( String string ) {
+		return new SID(Integer.parseInt( string, 16 ));
+	}
 }
