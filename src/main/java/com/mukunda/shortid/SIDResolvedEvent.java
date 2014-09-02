@@ -54,7 +54,7 @@ public class SIDResolvedEvent extends Event {
     }
  
     /*****************************************************
-     * Get the player who's SID was resolved.
+     * Get the player whose SID was resolved.
      * 
      * @return Online player who's SID was resolved.
      *****************************************************/
