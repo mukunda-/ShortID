@@ -191,14 +191,14 @@ public final class IDMap {
 	}
 	
 	/**************************************************************************
-	 * if the table has an SID for a UUID, this will fire an "on-resolved"
-	 * event and return an SID.
+	 * If the table has an SID for a UUID, this will schedule an "on-resolved"
+	 * event to be run on the next tick.
 	 * 
-	 * otherwise, this sets a flag that will cause an event to be generated
+	 * Otherwise, this sets a flag that will cause an event to be generated
 	 * when this UUID is resolved, and this will return null
 	 * 
 	 * @param uuid  UUID to flag
-	 * @return      see description
+	 * @return      See description
 	 **************************************************************************/
 	public synchronized SID postEventWhenResolved( UUID uuid ) {
 
@@ -213,4 +213,23 @@ public final class IDMap {
 		postEvent.add( uuid );
 		return null;
 	}
+
+	/**************************************************************************
+	 * If the table has an SID for a UUID, this will fire an "on-resolved"
+	 * event and return an SID.
+	 * 
+	 * Otherwise, this does nothing.
+	 * 
+	 * @param uuid  UUID of player involved in the event
+	 * @return      SID if the event was scheduled, null if not
+	 **************************************************************************/
+	public synchronized SID postEvent( UUID uuid ) {
+		SID sid = toSID.get( uuid );
+		if( sid != null ) {
+			// uuid is mapped, post event.
+			new EventRunner( uuid, sid ).runTask( context );
+		}
+		return sid; 
+	}
+
 }

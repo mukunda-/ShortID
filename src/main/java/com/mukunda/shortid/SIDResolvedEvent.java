@@ -28,12 +28,15 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 
-/**
- * Event when an SID is resolved for a player.
+/******************************************************************************
+ * Bukkit event that is triggered when an SID is resolved for a player.
+ * 
+ * This event is guaranteed to not trigger until a PlayerJoinEvent
+ * for the associated player has been handled.
  * 
  * @author mukunda
  *
- */
+ ******************************************************************************/
 public class SIDResolvedEvent extends Event {
 	private static final HandlerList handlers = new HandlerList();
     private final Player player;

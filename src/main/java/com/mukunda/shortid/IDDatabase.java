@@ -125,9 +125,10 @@ public class IDDatabase extends SQL {
 						// is seriously wrong (such as the table being maxed out)
 						selectStatement.setBytes( 1, uuidBytes );
 						ResultSet result = selectStatement.executeQuery();
-						result.next();
-						
+						if( !result.next() ) throw new SQLTransientException( "Unexpected error." );
+							
 						SID sid = new SID( result.getInt(1) );
+						
 						storage.map( (UUID)job.id, sid );
 						context.getFlatFiles().writeIDs( (UUID)job.id, sid, true );
 						
@@ -226,13 +227,13 @@ public class IDDatabase extends SQL {
 	protected void onConnected() throws SQLException {
 		
 		insertStatement = getConnection().prepareStatement( 
-				"INSERT IGNORE INTO " + table + "(`uuid`) VALUES (?)" );
+				"INSERT IGNORE INTO " + table + " (`uuid`) VALUES (?)" );
 	 
 		selectStatement = getConnection().prepareStatement(
-				"SELECT `sid` FROM " + table + "WHERE `uuid` = ? LIMIT 1" );
+				"SELECT `sid` FROM " + table + " WHERE `uuid` = ? LIMIT 1" );
 		
 		rqueryStatement = getConnection().prepareStatement(
-				"SELECT `uuid` FROM " + table + "WHERE `sid` = ? LIMIT 1" );
+				"SELECT `uuid` FROM " + table + " WHERE `sid` = ? LIMIT 1" );
 	}
 	  
 	/**************************************************************************
@@ -244,9 +245,10 @@ public class IDDatabase extends SQL {
 	private synchronized void finishedJob( Job j ) {
 		jobs.remove(j);
 		if( jobs.isEmpty() ) {
-			jobs.notifyAll();			
+			synchronized (jobProcessingLock) {
+				jobProcessingLock.notifyAll();
+			}
 		}
-		
 	}
 	
 	/**************************************************************************
@@ -319,9 +321,12 @@ public class IDDatabase extends SQL {
 	 **************************************************************************/
 	public synchronized void waitUntilFinished() {
 		try {
-			while( !jobs.isEmpty() ) {	
-				jobs.wait();
+			synchronized (jobProcessingLock) {
+				while( !jobs.isEmpty() ) {	
+					jobProcessingLock.wait();
+				}
 			}
+			
 		} catch( InterruptedException e ) {
 			context.getLogger().warning( "SQL flush was forcibly cancelled." );
 		}
@@ -341,9 +346,17 @@ public class IDDatabase extends SQL {
 	 * @return false if the import failed
 	 **************************************************************************/
 	public boolean importData() {
-
+		context.getLogger().info( ChatColor.YELLOW + "Importing data..." );
 		try {
 			final HashMap<UUID,SID> data = context.getFlatFiles().buildImport();
+			
+			int total = data.size();
+			if( total == 0 ) {
+				context.getLogger().info( ChatColor.YELLOW + "Nothing to import." );
+				return true;
+			}
+			int done = 0;
+			long progressTime = System.currentTimeMillis();
 			
 			while( true ) {
 				try {
@@ -361,8 +374,15 @@ public class IDDatabase extends SQL {
 						statement.setInt( 2, entry.getValue().getInt() );
 						statement.executeUpdate();
 						iter.remove();
+						
+						done++;
+						if( System.currentTimeMillis() >= progressTime + 3000 ) {
+							progressTime += 3000;
+							context.getLogger().info( String.format( ChatColor.YELLOW + "  %d%%...", done*100/total ) );
+						}
 					}
-					
+
+					context.getLogger().info( String.format( ChatColor.GREEN + "Import complete. %d IDs transferred.", total ) );
 					statement.close();
 					break;
 					
@@ -418,15 +438,17 @@ public class IDDatabase extends SQL {
 				if( !tables.next() ) {
 					Statement statement = getConnection().createStatement();
 					statement.executeUpdate( "CREATE TABLE "+table+" (" +
-							"uuid BINARY(16) NOT NULL," +
-							"sid INTEGER NOT NULL," +
-							"PRIMARY KEY (uuid,sid) ) " +
+							"sid INTEGER NOT NULL AUTO_INCREMENT PRIMARY KEY," +
+							"uuid BINARY(16) NOT NULL UNIQUE" +
+							" ) " +
 							"AUTO_INCREMENT = " + String.format( "%d", ShortID.INITIAL_SID ) );
 					
+					context.getLogger().info( ChatColor.YELLOW + "Created SQL table." );
 					importData = true;
 					break;
 				}
 				
+				break;
 				
 			} catch ( SQLTransientException|SQLRecoverableException e ) {
 				// retry in one second

@@ -43,7 +43,12 @@ import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.event.player.PlayerLoginEvent.Result;
 import org.bukkit.plugin.java.JavaPlugin;
 
-//---------------------------------------------------------------------------------------------
+/******************************************************************************
+ * ShortID Bukkit plugin
+ * 
+ * @author mukunda
+ * 
+ ******************************************************************************/
 public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	
 	public static ShortID instance;
@@ -55,12 +60,17 @@ public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	public static final int INITIAL_SID = 0x100;
 	
 	private int nextLocalID;
-	
-	//---------------------------------------------------------------------------------------------
+
+	/**************************************************************************
+	 * Get the ShortID API instance.
+	 * 
+	 * @return ShortID API instance, or null if the plugin is not loaded.
+	 **************************************************************************/
 	public static ShortIDAPI getAPI() {
 		return instance;
 	}
 	
+	//---------------------------------------------------------------------------------------------
 	public FlatFiles getFlatFiles() {
 		return flatfiles;
 	}
@@ -137,7 +147,7 @@ public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 				} catch( NumberFormatException e ) {
 					getLogger().severe( "Next ID file was corrupted, scanning data files to get next available ID." );
 					try {
-						nextLocalID = NextIDFinder.FindNextID( this );
+						nextLocalID = flatfiles.FindNextID();
 					} catch( IOException e2 ) {
 						getLogger().severe( "Could not read ID file table. " + e2.getMessage() );
 						setEnabled(false);
@@ -148,6 +158,7 @@ public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 				
 			} else {
 
+				getLogger().info( "Fresh Start!" );
 				nextLocalID = INITIAL_SID;
 			}
 		}
@@ -286,8 +297,10 @@ public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	public Player getPlayer( SID sid ) {
 		return Bukkit.getPlayer( getUUID(sid) );
 	}
-	
-	//---------------------------------------------------------------------------------------------
+
+	/**************************************************************************
+	 * {@inheritDoc}
+	 **************************************************************************/
 	@Override
 	public OfflinePlayer getOfflinePlayer( SID sid ) {
 		return Bukkit.getOfflinePlayer( getUUID(sid) );
@@ -297,20 +310,23 @@ public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	@EventHandler( priority = EventPriority.MONITOR )
 	public void onPlayerLogin( PlayerLoginEvent event ) {
 		if( event.getResult() == Result.ALLOWED ) {
-			
-			UUID uuid = event.getPlayer().getUniqueId();
-			SID sid = idMap.get( uuid ); 
-			if( sid == null ) {
-				if( flatfiles.readSID( uuid ) == null ) {
-					if( db != null ) {
-						
+			// when players login, start resolving their sid from the d
+			// do nothing in local mode
+
+			if( db != null ) {
+
+				UUID uuid = event.getPlayer().getUniqueId();
+				SID sid = idMap.get( uuid ); 
+				if( sid == null ) {
+					if( flatfiles.readSID( uuid ) == null ) {
+
 						// start resolving early so when they try to read the value
 						// later on there's less chance of a stall.
-						
-						db.resolve( event.getPlayer().getUniqueId() );
+
+						db.resolve( event.getPlayer().getUniqueId() ); 
 					} else {
-						// non database mode, the id is generated later.
-						
+						// their ID is cached already.
+						idMap.map( uuid, sid );
 					}
 				}
 			}
@@ -332,13 +348,10 @@ public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 				idMap.postEventWhenResolved( uuid );
 			} else {
 				sid = getSID( uuid );
-				Bukkit.getServer().getPluginManager().callEvent( 
-						new SIDResolvedEvent( event.getPlayer(), sid ) );
-
+				idMap.postEvent( uuid );
 			}
 		} else {
-			Bukkit.getServer().getPluginManager().callEvent( 
-					new SIDResolvedEvent( event.getPlayer(), sid ) );
+			idMap.postEvent( uuid );
 		}
 	}
 	

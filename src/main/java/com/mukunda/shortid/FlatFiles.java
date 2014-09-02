@@ -371,7 +371,7 @@ public class FlatFiles {
 	 * @return
 	 * @throws IOException
 	 **************************************************************************/
-	public static int FindNextID( ShortID context ) throws IOException {
+	public int FindNextID() throws IOException {
 		
 		// tbh i think the new file visitor class is fucking stupid
 		// using the old functions here.
@@ -401,4 +401,6 @@ public class FlatFiles {
 		}
 		return nextId;
 	}
+	
+	
 }
