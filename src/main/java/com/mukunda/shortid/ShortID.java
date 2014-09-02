@@ -23,19 +23,13 @@
  */
 
 package com.mukunda.shortid;
- 
-import java.io.BufferedInputStream;
-import java.io.File;
-import java.io.IOException; 
-import java.io.OutputStream;
-import java.nio.ByteBuffer; 
-import java.nio.channels.SeekableByteChannel;
+  
+import java.io.IOException;  
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files; 
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption; 
-import java.util.ArrayList; 
-import java.util.HashMap;
+import java.util.ArrayList;  
 import java.util.UUID;
 
 import org.bukkit.Bukkit;
@@ -50,7 +44,7 @@ import org.bukkit.event.player.PlayerLoginEvent.Result;
 import org.bukkit.plugin.java.JavaPlugin;
 
 //---------------------------------------------------------------------------------------------
-public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
+public final class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	
 	public static ShortID instance;
 
@@ -86,6 +80,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		}
 		
 		idMap = new IDMap( this );
+		flatfiles = new FlatFiles( this );
 
 		if( getConfig().getBoolean( "MySQL.enabled", false ) ) {
 
@@ -157,11 +152,14 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 			}
 		}
 		
+		getServer().getPluginManager().registerEvents( this, this );
+		
 		instance = this;
 
 	}
 	
 	//---------------------------------------------------------------------------------------------
+	@Override
 	public void onDisable() {
 		if( db != null ) {
 			db.waitUntilFinished();
@@ -169,7 +167,15 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		instance = null;
 	} 
 	
-	//---------------------------------------------------------------------------------------------
+	/**************************************************************************
+	 * Get the next SID, and increment the counter
+	 * 
+	 * The counter is also saved to disk.
+	 * 
+	 * This function is not, and should not, be used when using a database.
+	 * 
+	 * @return New Unique SID
+	 **************************************************************************/
 	private SID generateID() {
 		SID id = new SID(nextLocalID++);
 		ArrayList<String> lines = new ArrayList<String>();
@@ -190,9 +196,9 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		return id;
 	}
 	
-	
-	
-	//---------------------------------------------------------------------------------------------	
+	/**************************************************************************
+	 * {@inheritDoc}
+	 **************************************************************************/
 	@Override
 	public SID getSID( UUID uuid ) {
 		SID sid = idMap.get( uuid );
@@ -229,13 +235,17 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		return sid;
 	}
 	
-	//---------------------------------------------------------------------------------------------
+	/**************************************************************************
+	 * {@inheritDoc}
+	 **************************************************************************/
 	@Override
 	public SID getSID( OfflinePlayer player ) {
 		return getSID( player.getUniqueId() );
 	}
 	
-	//---------------------------------------------------------------------------------------------
+	/**************************************************************************
+	 * {@inheritDoc}
+	 **************************************************************************/
 	@Override
 	public UUID getUUID( SID sid ) {
 		UUID uuid = idMap.get( sid );
@@ -269,7 +279,9 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 		
 	}
 	
-	//---------------------------------------------------------------------------------------------
+	/**************************************************************************
+	 * {@inheritDoc}
+	 **************************************************************************/
 	@Override
 	public Player getPlayer( SID sid ) {
 		return Bukkit.getPlayer( getUUID(sid) );
@@ -297,8 +309,7 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 						
 						db.resolve( event.getPlayer().getUniqueId() );
 					} else {
-						// non database mode, the id is generated on the first call
-						// to getSID()
+						// non database mode, the id is generated later.
 						
 					}
 				}
@@ -311,15 +322,24 @@ public class ShortID extends JavaPlugin implements Listener, ShortIDAPI {
 	@EventHandler( priority = EventPriority.MONITOR )
 	public void onPlayerJoin( PlayerJoinEvent event ) {
 		
-		SID id = idMap.get( event.getPlayer().getUniqueId() );
-		if( id == null ) {
+		UUID uuid = event.getPlayer().getUniqueId();
+		SID sid = idMap.get( uuid );
+		if( sid == null ) {
 			if( db != null ) {
-				db.resolve( event.getPlayer().getUniqueId() );
+				// it is already resolving, but just make sure...?
+				db.resolve( uuid );
+				
+				idMap.postEventWhenResolved( uuid );
+			} else {
+				sid = getSID( uuid );
+				Bukkit.getServer().getPluginManager().callEvent( 
+						new SIDResolvedEvent( event.getPlayer(), sid ) );
+
 			}
-			
+		} else {
+			Bukkit.getServer().getPluginManager().callEvent( 
+					new SIDResolvedEvent( event.getPlayer(), sid ) );
 		}
-		
-		
 	}
 	
 	/**************************************************************************

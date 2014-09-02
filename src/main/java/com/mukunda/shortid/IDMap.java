@@ -203,7 +203,7 @@ public final class IDMap {
 	public synchronized SID postEventWhenResolved( UUID uuid ) {
 
 		SID sid = toSID.get( uuid );
-		if( uuid != null ) {
+		if( sid != null ) {
 			// uuid is mapped, post event.
 			new EventRunner( uuid, sid ).runTask( context );
 			return sid; 

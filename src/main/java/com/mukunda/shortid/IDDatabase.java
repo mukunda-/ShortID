@@ -134,6 +134,7 @@ public class IDDatabase extends SQL {
 					} else if( job.id instanceof SID ) {
 						// SID -> UUID resolving job
 						
+						connect();
 						rqueryStatement.setInt( 1, ((SID)job.id).getInt() );
 						ResultSet result = rqueryStatement.executeQuery();
 						
@@ -148,6 +149,7 @@ public class IDDatabase extends SQL {
 							uuid = new UUID(0,0);
 						}
 						storage.map( uuid, (SID)job.id );
+						context.getFlatFiles().writeIDs( uuid, (SID)job.id, true );
 						
 					}
 					

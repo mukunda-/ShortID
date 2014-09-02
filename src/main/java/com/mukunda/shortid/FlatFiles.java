@@ -333,41 +333,33 @@ public class FlatFiles {
 	 **************************************************************************/
 	public HashMap<UUID,SID> buildImport() throws IOException {
 		HashMap<UUID,SID> result = new HashMap<UUID,SID>();
-		
-		File[] files = new File( context.getDataFolder(), "sid" ).listFiles();
+
+		File[] files = new File( context.getDataFolder(), "uuid" ).listFiles();
 		for( File file : files ) {
 
 			if( !file.isFile() ) continue;
-			if( !file.getName().endsWith(".map") ) continue;
-			
-			ByteBuffer buffer = ByteBuffer.allocate(16);//[4];
-			//byte[] buffer = new byte[4];
-			
-			String sidBase = file.getName().substring( 0, 6 );
-			
+			if( !file.getName().endsWith(".uuid") ) continue;
+
+			ByteBuffer buffer = ByteBuffer.allocate(20);
+
 			try (
-				BufferedInputStream input = new BufferedInputStream( 
-						Files.newInputStream( file.toPath() ) ) ) {
-				
-				for( int index = 0; index < 256; index++ ) {
-					
-					int size = input.read( buffer.array() );
-					if( size != 16 ) break;
-					
-					String sidString = sidBase + String.format( "%02X", index );
-					
+					BufferedInputStream input = new BufferedInputStream( 
+							Files.newInputStream( file.toPath() ) ) ) {
+
+				while( input.read( buffer.array() ) == 20 ) {
+
 					long dataL, dataH;
 					dataL = buffer.getLong(0);
-					dataH = buffer.getLong(1);
+					dataH = buffer.getLong(8);
+					SID sid = new SID( buffer.getInt(16) );
+
 					if( dataL == 0 && dataH == 0 ) continue;
-					
-					result.put( new UUID(dataH,dataL), SID.fromString(sidString) );
-					
+
+					result.put( new UUID(dataH,dataL), sid ); 
 				}
 			} catch( IOException e ) {
 				throw e;
 			} 
-
 		}
 		return result;
 	}
@@ -390,18 +382,17 @@ public class FlatFiles {
 		for( File file : files ) {
 
 			if( !file.isFile() ) continue;
-			if( !file.getName().endsWith(".map") ) continue;
+			if( !file.getName().endsWith(".uuid") ) continue;
 			
-			ByteBuffer buffer = ByteBuffer.allocate(4);
+			ByteBuffer buffer = ByteBuffer.allocate(20);
 			
 			try (
 				BufferedInputStream input = new BufferedInputStream( 
 						Files.newInputStream( file.toPath() ) ) ) {
 				 
-				for(;;) {
-					int size = input.read( buffer.array() );
-					if( size != 4 ) break;
-					if( buffer.getInt(0) >= nextId ) nextId = buffer.getInt(0)+1;
+				while( input.read( buffer.array() ) == 20 ) {
+					if( buffer.getInt(16) >= nextId ) 
+						nextId = buffer.getInt(16) + 1;
 				}
 			} catch( IOException e ) {
 				throw e;
